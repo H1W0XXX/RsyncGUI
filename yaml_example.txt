@@ -1,0 +1,17 @@
+- name: "node-01"
+  host: "1.1.1.1"
+  port: 10001
+  lanHost: "192.168.1.10"
+  lanPort: 22
+  user: "user"
+  auth: "private_key"
+  keyPath: "/path/to/key"
+  password: ""
+
+- name: "node-02"
+  host: "2.2.2.2"
+  port: 22
+  user: "admin"
+  auth: "password"
+  keyPath: ""
+  password: "******"
