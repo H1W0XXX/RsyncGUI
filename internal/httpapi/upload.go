@@ -35,7 +35,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	hostName := r.FormValue("hostName")
 	dstPath := r.FormValue("path")
 	relPath := r.FormValue("relPath")
-	
+
 	if hostName == "" || dstPath == "" {
 		http.Error(w, "hostName and path are required", http.StatusBadRequest)
 		return
@@ -54,6 +54,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	tmpPath := tmpFile.Name()
 	defer tmpFile.Close()
+	defer os.Remove(tmpPath)
 
 	if _, err := io.Copy(tmpFile, file); err != nil {
 		_ = os.Remove(tmpPath)
