@@ -1,0 +1,252 @@
+.card {
+    background: radial-gradient(circle at top left, #1a2330 0, #0c1017 60%);
+    border-radius: 14px;
+    border: 1px solid var(--border-subtle);
+    padding: 12px 12px 14px;
+    box-shadow: 0 14px 30px rgba(0, 0, 0, 0.35);
+}
+
+.card-header {
+    margin-bottom: 8px;
+}
+
+.card-title {
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.card-subtitle {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-top: 2px;
+}
+
+.field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-bottom: 8px;
+}
+
+.field-inline {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+}
+
+.field label {
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+select,
+input[type="text"],
+input[type="number"] {
+    border-radius: 8px;
+    border: 1px solid var(--border-subtle);
+    padding: 6px 8px;
+    font-size: 13px;
+    background: #020509;
+    color: var(--text-main);
+    outline: none;
+}
+
+select:focus,
+input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 1px var(--accent-soft);
+}
+
+
+.drop-zone {
+    margin-top: 6px;
+    border-radius: 10px;
+    border: 1px dashed #374151;
+    padding: 16px 10px;
+    font-size: 12px;
+    color: var(--text-muted);
+    text-align: center;
+    transition: all 0.15s ease-out;
+    background: rgba(15, 23, 42, 0.7);
+}
+
+.drop-zone.drag-over {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+    color: var(--text-main);
+}
+
+.drop-zone.uploading {
+    border-color: #fbbf24;
+}
+
+.drop-zone-text {
+    opacity: 0.9;
+}
+
+.direction-switch {
+    display: flex;
+    gap: 6px;
+    justify-content: center;
+}
+
+.dir-btn {
+    flex: 1;
+    border-radius: 999px;
+    border: 1px solid var(--border-subtle);
+    background: #020617;
+    padding: 6px 10px;
+    font-size: 13px;
+    color: var(--text-muted);
+    cursor: pointer;
+}
+
+.dir-btn.active {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+    color: var(--text-main);
+}
+
+
+.primary-btn {
+    border-radius: 999px;
+    border: none;
+    padding: 9px 16px;
+    font-size: 14px;
+    background: var(--accent);
+    color: #f9fafb;
+    cursor: pointer;
+    font-weight: 500;
+    align-self: flex-start;
+    box-shadow: 0 10px 25px rgba(37, 99, 235, 0.4);
+}
+
+.primary-btn:disabled {
+    opacity: 0.6;
+    cursor: default;
+    box-shadow: none;
+}
+
+.options-card {
+    margin-top: 6px;
+}
+
+.pill-row {
+    display: flex;
+    gap: 6px;
+}
+
+.pill-btn {
+    border-radius: 999px;
+    border: 1px solid var(--border-subtle);
+    padding: 5px 10px;
+    font-size: 12px;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+}
+
+.pill-btn.selected {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+    color: var(--text-main);
+}
+
+.jobs-card {
+    width: 100%;
+}
+
+.small-btn {
+    border-radius: 999px;
+    border: 1px solid var(--border-subtle);
+    background: transparent;
+    color: var(--text-muted);
+    padding: 4px 10px;
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.jobs-list {
+    max-height: 340px;
+    overflow-y: auto;
+    margin-top: 8px;
+    padding-right: 4px;
+}
+
+.job-item {
+    border-radius: 10px;
+    border: 1px solid #111827;
+    padding: 8px;
+    background: rgba(15, 23, 42, 0.75);
+    margin-bottom: 8px;
+}
+
+.job-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+}
+
+.job-id {
+    font-family: monospace;
+}
+
+.job-status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 999px;
+}
+
+.job-status-text {
+    text-transform: uppercase;
+    font-size: 11px;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+}
+
+.job-mode-tag {
+    margin-left: auto;
+    font-size: 11px;
+    padding: 2px 6px;
+    border-radius: 999px;
+    border: 1px solid #1f2933;
+    color: #d1d5db;
+}
+
+.job-paths {
+    margin-top: 4px;
+    font-size: 12px;
+}
+
+.job-path-line {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.job-logs {
+    margin-top: 4px;
+    font-size: 11px;
+}
+
+.job-logs summary {
+    cursor: pointer;
+    color: var(--accent);
+}
+
+.job-logs pre {
+    margin-top: 4px;
+    padding: 4px;
+    background: #020617;
+    border-radius: 6px;
+    max-height: 120px;
+    overflow-y: auto;
+}
+
+.empty-hint {
+    font-size: 12px;
+    color: var(--text-muted);
+}
+

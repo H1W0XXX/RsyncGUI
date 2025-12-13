@@ -1,0 +1,10 @@
+@media (max-width: 900px) {
+    .layout-row {
+        flex-direction: column;
+    }
+    .endpoints-wrapper {
+        grid-template-columns: 1fr;
+    }
+}
+
+

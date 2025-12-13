@@ -460,11 +460,19 @@ func (m *JobManager) runRemoteToRemote_OneHopSSH(job *Job, ctx context.Context) 
 	} else {
 		innerTarget = srcHost
 	}
+	
+	// 连接 execHost（第一跳）
+	execDial := dialFor(&execHost.Config, false)
 
 	w := &jobLineWriter{job: job}
+	job.mu.Lock()
+	job.LogLines = append(job.LogLines,
+		fmt.Sprintf("[remote-remote] first hop (control->execHost) %s@%s:%d (LAN=%v, forced WAN)",
+			execHost.Config.User, execDial.Host, execDial.Port, useLan,
+		),
+	)
+	job.mu.Unlock()
 
-	// 连接 execHost（第一跳）
-	execDial := dialFor(&execHost.Config, useLan)
 	sshCli, err := sshDial(&execHost.Config, execDial)
 	if err != nil {
 		return err

@@ -1,0 +1,202 @@
+.fs-browser-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 12px;
+    margin-bottom: 4px;
+}
+
+.fs-browser-title {
+    color: var(--text-muted);
+}
+
+.fs-list {
+    flex: 1;
+    overflow-y: auto;
+    padding-right: 2px;
+}
+
+.fs-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    padding: 2px 4px;
+    border-radius: 6px;
+    cursor: default;
+    min-width: 0; /* 这行很重要，给 flex 子元素可以收缩空间 */
+}
+
+.fs-item.dir {
+    cursor: pointer;
+}
+
+.fs-item:hover {
+    background: rgba(31, 41, 55, 0.9);
+}
+
+.fs-item-icon {
+    flex: 0 0 auto;
+    width: 16px;
+}
+
+.fs-item-name {
+    flex: 1 1 auto;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.fs-error {
+    font-size: 11px;
+    color: #f87171;
+    margin-bottom: 4px;
+}
+
+.fs-empty {
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+
+
+
+
+/* 顶部这排：A | 中 | B */
+.main-layout {
+    display: flex;
+    justify-content: center;
+    align-items: stretch;
+    gap: 16px;
+    padding: 16px 0;
+}
+
+/* 左右各自包一下，避免被 flex 拉伸 */
+.endpoint-wrapper {
+    flex: 0 0 auto;
+}
+
+/* 调整 EndpointPanel 卡片尺寸：固定宽度 + 比现在高一点 */
+.endpoint-card {
+    /* 固定宽度 */
+    width: 420px;
+    max-width: 420px;
+    min-width: 420px;
+
+    /* 高度固定，内部滚动 */
+    height: 520px;
+
+    /* 让内部可以按列分配空间 */
+    display: flex;
+    flex-direction: column;
+
+    /* 原来的卡片通用样式记得保留：如果在别处已经有 .card，就不用重复 */
+    background: radial-gradient(circle at top left, #1a2330 0, #0c1017 60%);
+    border-radius: 14px;
+    border: 1px solid var(--border-subtle);
+    padding: 12px 12px 14px;
+    box-shadow: 0 14px 30px rgba(0, 0, 0, 0.35);
+}
+
+/* 让里面的 fs-browser 能把多余空间占满，别只占一点点高度 */
+.fs-browser {
+    margin-top: 8px;
+    border-radius: 10px;
+    border: 1px solid #111827;
+    padding: 6px 6px 8px;
+    background: rgba(15, 23, 42, 0.85);
+
+    /* 关键：占满 card 剩余高度，不再往外溢出 */
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+
+    /* 防止内容画到卡片外边 */
+    overflow: hidden;
+}
+
+/* 中间竖直那一列：A→B / B→A / Exec side / Sync / Options */
+.center-column {
+    flex: 0 0 auto;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: flex-start;
+    gap: 12px;
+    min-width: 140px;
+    padding-top: 12px;
+}
+
+/* 方向切换那块自身样式你之前应该已经有了，这里可以额外美化按钮 */
+.center-column .primary-btn {
+    width: 100%;
+}
+
+.exec-side {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 13px;
+}
+
+
+.fs-item.selected {
+    background: rgba(59, 130, 246, 0.25);
+}
+
+
+
+/* ===== FS 行：左(图标+名字) 右(时间+大小) ===== */
+
+.fs-item {
+    justify-content: space-between; /* 左右分开 */
+}
+
+.fs-item-left {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0; /* 允许内部 name ellipsis */
+    flex: 1 1 auto;
+}
+
+.fs-icon {
+    flex: 0 0 auto;
+    width: 16px;
+}
+
+.fs-name {
+    flex: 1 1 auto;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.fs-item-right {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 11px;
+    color: var(--text-muted);
+    white-space: nowrap;
+    opacity: 0.85;
+}
+
+.fs-mtime {
+    min-width: 140px;   /* 你想更紧凑就调小，比如 120px */
+    text-align: right;
+}
+
+.fs-size {
+    min-width: 70px;
+    text-align: right;
+    opacity: 0.95;
+}
+
+
+.fs-list, .fs-item, .fs-item * {
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    user-select: none;
+}

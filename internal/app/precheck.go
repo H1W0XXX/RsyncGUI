@@ -2,7 +2,10 @@ package app
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
+	"time"
 )
 
 // RunPrechecks：统一跑源读/目标写权限检查
@@ -13,13 +16,10 @@ func (a *App) RunPrechecks(plan *TransferPlan) (*PrecheckResult, error) {
 		Message:        "",
 	}
 
-	// 检查源
 	if err := a.checkSourceReadable(plan); err != nil {
 		res.SourceReadable = false
 		res.Message += "source: " + err.Error() + "; "
 	}
-
-	// 检查目标（以目标目录为单位）
 	if err := a.checkDestWritable(plan); err != nil {
 		res.DestWritable = false
 		res.Message += "dest: " + err.Error() + "; "
@@ -39,11 +39,23 @@ func (a *App) checkSourceReadable(plan *TransferPlan) error {
 	path := plan.Source.Path
 
 	if src.IsLocal {
-		// 简单版：直接试一下 ls/dir
-		out, err := runLocalShell(fmt.Sprintf("ls %q", path))
+		// ✅ Windows/Linux 都可：不用 shell
+		st, err := os.Stat(path)
 		if err != nil {
-			return fmt.Errorf("local source not readable: %v (%s)", err, out)
+			return fmt.Errorf("local source not readable: %v", err)
 		}
+		if st.IsDir() {
+			_, err := os.ReadDir(path)
+			if err != nil {
+				return fmt.Errorf("local source not readable: %v", err)
+			}
+			return nil
+		}
+		f, err := os.Open(path)
+		if err != nil {
+			return fmt.Errorf("local source not readable: %v", err)
+		}
+		_ = f.Close()
 		return nil
 	}
 
@@ -65,12 +77,19 @@ func (a *App) checkDestWritable(plan *TransferPlan) error {
 	}
 	path := plan.Dest.Path
 
-	// 尝试写入一个临时文件
 	if dst.IsLocal {
-		cmd := fmt.Sprintf(`mkdir -p %q && echo test > %q/.rsync_gui_test && rm %q/.rsync_gui_test`, path, path, path)
-		out, err := runLocalShell(cmd)
+		// ✅ Windows/Linux 都可：不用 shell
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			return fmt.Errorf("local dest not writable: %v", err)
+		}
+		tmp := filepath.Join(path, fmt.Sprintf(".rsync_gui_test_%d", time.Now().UnixNano()))
+		f, err := os.OpenFile(tmp, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
 		if err != nil {
-			return fmt.Errorf("local dest not writable: %v (%s)", err, out)
+			return fmt.Errorf("local dest not writable: %v", err)
+		}
+		_ = f.Close()
+		if err := os.Remove(tmp); err != nil {
+			return fmt.Errorf("local dest not writable: %v", err)
 		}
 		return nil
 	}

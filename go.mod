@@ -1,6 +1,6 @@
 module rsyncgui
 
-go 1.24.2
+go 1.25.0
 
 require (
 	github.com/gokrazy/rsync v0.2.10
@@ -20,3 +20,5 @@ require (
 	golang.org/x/sys v0.39.0 // indirect
 	kernel.org/pub/linux/libs/security/libcap/psx v1.2.70 // indirect
 )
+
+replace github.com/gokrazy/rsync => ./third_party/rsync
