@@ -19,11 +19,13 @@ func (s *Server) handleFSHome(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// ✅ HTTP 层统一排序
+	sortEntriesWindowsLike(res.Entries)
+
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(res)
 }
 
-// GET /api/fs/list?host=zkyd45&path=/mnt/data
 func (s *Server) handleFSList(w http.ResponseWriter, r *http.Request) {
 	host := r.URL.Query().Get("host")
 	path := r.URL.Query().Get("path")
@@ -37,6 +39,9 @@ func (s *Server) handleFSList(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "list dir error: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+
+	// ✅ HTTP 层统一排序
+	sortEntriesWindowsLike(res.Entries)
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(res)
