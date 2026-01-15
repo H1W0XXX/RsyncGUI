@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState, useRef } from "react";
 import { HostInfo, Endpoint, FSEntry } from "../types/api";
 import { api } from "../api/client";
+import { useTranslation } from "react-i18next";
 
 interface Props {
     title: string;
@@ -21,10 +22,15 @@ const EndpointPanel: React.FC<Props> = ({
                                             selectedNames,
                                             onSelectedChange,
                                         }) => {
+    const { t } = useTranslation();
     const [cwd, setCwd] = useState<string>("");
     const [entries, setEntries] = useState<FSEntry[]>([]);
     const [fsLoading, setFsLoading] = useState(false);
     const [fsError, setFsError] = useState<string | null>(null);
+
+    const navSeqRef = useRef(0);
+    const abortRef = useRef<AbortController | null>(null);
+    const prefetchRef = useRef<Map<string, FSEntry[]>>(new Map());
 
     const [isDragging, setIsDragging] = useState(false);
     const [uploading, setUploading] = useState(false);
@@ -106,6 +112,14 @@ const EndpointPanel: React.FC<Props> = ({
         onSelectedChange?.([]);
     };
 
+    const storePrefetch = (base: string, children?: Record<string, FSEntry[]>) => {
+        if (!base || !children) return;
+        for (const [name, ents] of Object.entries(children)) {
+            const childPath = joinPathSmart(base, name);
+            prefetchRef.current.set(childPath, ents);
+        }
+    };
+
     const handleHostChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
         const newHost = e.target.value;
         setCwd("");
@@ -123,51 +137,80 @@ const EndpointPanel: React.FC<Props> = ({
             return;
         }
 
-        let cancelled = false;
+        abortRef.current?.abort();
+        navSeqRef.current += 1;
+        const seq = navSeqRef.current;
+        const controller = new AbortController();
+        abortRef.current = controller;
+        prefetchRef.current.clear();
 
         (async () => {
             try {
                 setFsLoading(true);
                 setFsError(null);
 
-                const res = await api.fsHome(value.hostName);
-                if (cancelled) return;
+                const res = await api.fsHome(value.hostName, {
+                    prefetch: true,
+                    maxChildren: 64,
+                    signal: controller.signal,
+                });
+                if (seq !== navSeqRef.current) return;
 
                 setCwd(res.cwd);
                 setEntries(res.entries);
+                prefetchRef.current.set(res.cwd, res.entries);
+                storePrefetch(res.cwd, res.children);
                 clearSelection();
 
                 onChange({ ...value, path: res.cwd });
             } catch (err: any) {
-                if (!cancelled) setFsError(err.message || String(err));
+                if (err?.name === "AbortError") return;
+                if (seq === navSeqRef.current) setFsError(err.message || String(err));
             } finally {
-                if (!cancelled) setFsLoading(false);
+                if (seq === navSeqRef.current) setFsLoading(false);
             }
         })();
 
         return () => {
-            cancelled = true;
+            controller.abort();
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [value.hostName]);
 
     const refreshDir = useCallback(
-        async (path: string) => {
+        async (path: string, opts?: { showLoading?: boolean }) => {
             if (!value.hostName) return;
 
+            abortRef.current?.abort();
+            navSeqRef.current += 1;
+            const seq = navSeqRef.current;
+            const controller = new AbortController();
+            abortRef.current = controller;
+
+            const showLoading = opts?.showLoading ?? true;
+
             try {
-                setFsLoading(true);
+                if (showLoading) setFsLoading(true);
                 setFsError(null);
-                const res = await api.fsList(value.hostName, path);
+
+                const res = await api.fsList(value.hostName, path, {
+                    prefetch: true,
+                    maxChildren: 64,
+                    signal: controller.signal,
+                });
+                if (seq !== navSeqRef.current) return;
 
                 setCwd(res.cwd);
                 setEntries(res.entries);
+                prefetchRef.current.set(res.cwd, res.entries);
+                storePrefetch(res.cwd, res.children);
                 clearSelection();
                 onChange({ ...value, path: res.cwd });
             } catch (err: any) {
-                setFsError(err.message || String(err));
+                if (err?.name === "AbortError") return;
+                if (seq === navSeqRef.current) setFsError(err.message || String(err));
             } finally {
-                setFsLoading(false);
+                if (seq === navSeqRef.current && showLoading) setFsLoading(false);
             }
         },
         [value.hostName, value, onChange]
@@ -222,7 +265,19 @@ const EndpointPanel: React.FC<Props> = ({
             return;
         }
 
-        refreshDir(joinPathSmart(cwd, entry.name));
+        const nextPath = joinPathSmart(cwd, entry.name);
+        const cached = prefetchRef.current.get(nextPath);
+        if (cached) {
+            setCwd(nextPath);
+            setEntries(cached);
+            setFsError(null);
+            clearSelection();
+            onChange({ ...value, path: nextPath });
+            refreshDir(nextPath, { showLoading: false }); // 用新结果覆盖旧时间戳
+            return;
+        }
+
+        refreshDir(nextPath);
     };
 
     // ========== 手动输入 path ==========
@@ -305,7 +360,7 @@ const EndpointPanel: React.FC<Props> = ({
             setIsDragging(false);
 
             if (!value.hostName || !cwd) {
-                alert("请选择 Host，并保证 Path 非空，再拖文件/文件夹进来");
+                alert(t("endpoint_panel.alert_upload_select_host"));
                 return;
             }
 
@@ -324,7 +379,7 @@ const EndpointPanel: React.FC<Props> = ({
                 }
 
                 await refreshDir(cwd);
-                alert(`上传完成（共 ${collected.length} 个文件）`);
+                alert(t("endpoint_panel.alert_upload_complete", { count: collected.length }));
             } catch (err: any) {
                 console.error(err);
                 alert(err.message || String(err));
@@ -332,7 +387,7 @@ const EndpointPanel: React.FC<Props> = ({
                 setUploading(false);
             }
         },
-        [value.hostName, cwd, refreshDir]
+        [value.hostName, cwd, refreshDir, t]
     );
 
     const selSet = new Set(selectedNames ?? []);
@@ -344,7 +399,7 @@ const EndpointPanel: React.FC<Props> = ({
                 {selectedHost && (
                     <div className="card-subtitle">
                         {selectedHost.isLocal
-                            ? "This machine"
+                            ? t("endpoint_panel.host_local")
                             : `${selectedHost.user}@${selectedHost.host}:${selectedHost.port}`}
                     </div>
                 )}
@@ -356,7 +411,7 @@ const EndpointPanel: React.FC<Props> = ({
                     <option value="">Select host...</option>
                     {hosts.map((h) => (
                         <option key={h.name} value={h.name}>
-                            {h.isLocal ? "[local]" : h.name}
+                            {h.isLocal ? `[${t("endpoint_panel.host_local")}]` : h.name}
                             {h.remark ? ` - ${h.remark}` : ""}
                         </option>
                     ))}
@@ -365,7 +420,13 @@ const EndpointPanel: React.FC<Props> = ({
 
             <div className="field">
                 <label>Path</label>
-                <input type="text" value={cwd} onChange={handlePathChange} onBlur={handlePathBlur} />
+                <input
+                    type="text"
+                    value={cwd}
+                    onChange={handlePathChange}
+                    onBlur={handlePathBlur}
+                    placeholder={t("endpoint_panel.path_placeholder")}
+                />
             </div>
 
             <div
@@ -379,7 +440,7 @@ const EndpointPanel: React.FC<Props> = ({
                 onDrop={onDrop}
             >
                 <div className="drop-zone-text">
-                    {uploading ? "Uploading..." : "拖拽文件 / 文件夹到这里，按当前目录结构上传"}
+                    {uploading ? t("endpoint_panel.drop_zone_uploading") : t("endpoint_panel.drop_zone_hint")}
                 </div>
             </div>
 
@@ -394,7 +455,7 @@ const EndpointPanel: React.FC<Props> = ({
                     </button>
                 </div>
 
-                {fsError && <div className="fs-error">{fsError}</div>}
+                {fsError && <div className="fs-error">{t("endpoint_panel.fs_error", { message: fsError })}</div>}
 
                 <div className="fs-list">
                     {canGoParent(cwd) && (
@@ -403,8 +464,12 @@ const EndpointPanel: React.FC<Props> = ({
                             onClick={(ev) => handleItemClick({ name: "..", isDir: true }, -1, ev)}
                             onDoubleClick={() => handleItemDoubleClick({ name: "..", isDir: true })}
                         >
-                            📁 ..
+                            📁 {t("endpoint_panel.parent_dir")}
                         </div>
+                    )}
+
+                    {entries.length === 0 && !fsLoading && !fsError && (
+                        <div className="fs-empty">{t("endpoint_panel.fs_empty")}</div>
                     )}
 
                     {entries.map((e, idx) => (

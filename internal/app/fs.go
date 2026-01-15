@@ -5,7 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
+	"sort"
 	"strings"
+	"sync"
 )
 
 // FSEntry 表示目录里的一个条目
@@ -16,14 +19,33 @@ type FSEntry struct {
 	Size  int64  `json:"size,omitempty"`  // bytes
 }
 
+func sortEntries(entries []FSEntry) {
+	sort.Slice(entries, func(i, j int) bool {
+		// 文件夹在前
+		if entries[i].IsDir != entries[j].IsDir {
+			return entries[i].IsDir
+		}
+		// 同类按名字升序
+		return entries[i].Name < entries[j].Name
+	})
+}
+
 // FSListResult 列目录结果
 type FSListResult struct {
 	CWD     string    `json:"cwd"`     // 当前目录
 	Entries []FSEntry `json:"entries"` // 文件/子目录列表
+
+	// Children：可选的 1 级子目录预取结果（key=子目录名）
+	Children map[string][]FSEntry `json:"children,omitempty"`
 }
 
 // ListDir 列出某个 host 上某个 path 下的目录内容
 func (a *App) ListDir(hostName, path string) (*FSListResult, error) {
+	return a.ListDirEx(hostName, path, false, 0)
+}
+
+// ListDirEx：可选同时预取 1 级子目录内容
+func (a *App) ListDirEx(hostName, path string, prefetch bool, maxChildren int) (*FSListResult, error) {
 	h, ok := a.Hosts.Get(hostName)
 	if !ok {
 		return nil, fmt.Errorf("unknown host %q", hostName)
@@ -34,10 +56,30 @@ func (a *App) ListDir(hostName, path string) (*FSListResult, error) {
 		if err != nil {
 			return nil, err
 		}
-		return &FSListResult{CWD: path, Entries: entries}, nil
+		sortEntries(entries)
+		res := &FSListResult{CWD: path, Entries: entries}
+		if prefetch {
+			res.Children = listDirLocalChildren(path, entries, maxChildren)
+		}
+		return res, nil
 	}
 
-	return listDirRemotePython(h, path)
+	var res *FSListResult
+	var err error
+	if prefetch {
+		res, err = listDirRemotePythonPrefetch(h, path, maxChildren)
+	} else {
+		res, err = listDirRemotePython(h, path)
+	}
+	if err != nil {
+		return nil, err
+	}
+	sortEntries(res.Entries)
+	for name, child := range res.Children {
+		sortEntries(child)
+		res.Children[name] = child
+	}
+	return res, nil
 }
 
 func parsePyResult(tag, out string, err error) (string, error) {
@@ -98,6 +140,10 @@ func getRemoteHomeByPython(h *Host) (string, error) {
 
 // HomeDir: 获取主目录 (~) 的绝对路径并列目录
 func (a *App) HomeDir(hostName string) (*FSListResult, error) {
+	return a.HomeDirEx(hostName, false, 0)
+}
+
+func (a *App) HomeDirEx(hostName string, prefetch bool, maxChildren int) (*FSListResult, error) {
 	h, ok := a.Hosts.Get(hostName)
 	if !ok {
 		return nil, fmt.Errorf("unknown host %q", hostName)
@@ -108,14 +154,14 @@ func (a *App) HomeDir(hostName string) (*FSListResult, error) {
 		if err != nil {
 			return nil, err
 		}
-		return a.ListDir(hostName, home)
+		return a.ListDirEx(hostName, home, prefetch, maxChildren)
 	}
 
 	home, err := getRemoteHomeByPython(h)
 	if err != nil {
 		return nil, err
 	}
-	return a.ListDir(hostName, home)
+	return a.ListDirEx(hostName, home, prefetch, maxChildren)
 }
 
 // ========= 下面是本机/远程各自的实现 =========
@@ -148,19 +194,67 @@ func listDirLocal(path string) ([]FSEntry, error) {
 	return out, nil
 }
 
+func listDirLocalChildren(base string, entries []FSEntry, maxChildren int) map[string][]FSEntry {
+	if maxChildren <= 0 {
+		maxChildren = 64
+	}
+
+	children := make(map[string][]FSEntry)
+
+	sem := make(chan struct{}, 8)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+
+	n := 0
+	for _, e := range entries {
+		if !e.IsDir {
+			continue
+		}
+		n++
+		if n > maxChildren {
+			break
+		}
+		dirName := e.Name
+		dirPath := filepath.Join(base, dirName)
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			sub, err := listDirLocal(dirPath)
+			if err != nil {
+				return
+			}
+			sortEntries(sub)
+
+			mu.Lock()
+			children[dirName] = sub
+			mu.Unlock()
+		}()
+	}
+
+	wg.Wait()
+	if len(children) == 0 {
+		return nil
+	}
+	return children
+}
+
 func listDirRemotePython(h *Host, path string) (*FSListResult, error) {
 	// 远端 python 输出：三行（BEGIN / base64(json) / END）
 	// 增加字段：mtime(秒) / size(字节, 目录给 0)
 	py := fmt.Sprintf(
 		`import os,json,base64; p=%q; items=[]; 
-for n in os.listdir(p):
-  fp=os.path.join(p,n)
-  try:
-    st=os.stat(fp, follow_symlinks=False)
-    isdir=os.path.isdir(fp)
-    items.append({"name":n,"isDir":isdir,"mtime":int(st.st_mtime),"size":(0 if isdir else int(st.st_size))})
-  except Exception:
-    continue
+with os.scandir(p) as it:
+  for de in it:
+    try:
+      isdir=de.is_dir(follow_symlinks=False)
+      st=de.stat(follow_symlinks=False)
+      items.append({"name":de.name,"isDir":isdir,"mtime":int(st.st_mtime),"size":(0 if isdir else int(st.st_size))})
+    except Exception:
+      continue
 b=base64.b64encode(json.dumps(items,separators=(",",":")).encode()).decode(); 
 print("__PY_BEGIN__"); print(b); print("__PY_END__")`,
 		path,
@@ -192,6 +286,74 @@ print("__PY_BEGIN__"); print(b); print("__PY_END__")`,
 		CWD:     path,
 		Entries: entries,
 	}, nil
+}
+
+func listDirRemotePythonPrefetch(h *Host, path string, maxChildren int) (*FSListResult, error) {
+	if maxChildren <= 0 {
+		maxChildren = 64
+	}
+
+	py := fmt.Sprintf(
+		`import os,json,base64; p=%q; maxc=%d; 
+def listdir(d):
+  items=[]
+  with os.scandir(d) as it:
+    for de in it:
+      try:
+        isdir=de.is_dir(follow_symlinks=False)
+        st=de.stat(follow_symlinks=False)
+        items.append({"name":de.name,"isDir":isdir,"mtime":int(st.st_mtime),"size":(0 if isdir else int(st.st_size))})
+      except Exception:
+        continue
+  return items
+base=listdir(p)
+children={}
+n=0
+for e in base:
+  if not e.get("isDir"): 
+    continue
+  n+=1
+  if n>maxc: 
+    break
+  name=e.get("name","")
+  if not name:
+    continue
+  try:
+    children[name]=listdir(os.path.join(p,name))
+  except Exception:
+    continue
+res={"cwd":p,"entries":base,"children":children}
+b=base64.b64encode(json.dumps(res,separators=(",",":")).encode()).decode(); 
+print("__PY_BEGIN__"); print(b); print("__PY_END__")`,
+		path,
+		maxChildren,
+	)
+
+	out, err := runSSH(h, "python3 -c "+shQuote(py)+" 2>&1")
+	if err != nil {
+		return nil, fmt.Errorf("remote listdir(prefetch) ssh failed: %w; out=%q", err, out)
+	}
+
+	b64, e := extractBetweenMarkers(out, "__PY_BEGIN__", "__PY_END__")
+	if e != nil {
+		return nil, fmt.Errorf("remote listdir(prefetch) markers not found: %v; raw=%q", e, out)
+	}
+
+	data, e := base64.StdEncoding.DecodeString(strings.TrimSpace(b64))
+	if e != nil {
+		return nil, fmt.Errorf("remote listdir(prefetch) base64 decode failed: %v; b64=%q; raw=%q", e, b64, out)
+	}
+
+	var res FSListResult
+	if e := json.Unmarshal(data, &res); e != nil {
+		return nil, fmt.Errorf("remote listdir(prefetch) json unmarshal failed: %v; json=%q", e, string(data))
+	}
+
+	// python side 直接填 cwd
+	if res.CWD == "" {
+		res.CWD = path
+	}
+	return &res, nil
 }
 
 func extractBetweenMarkers(raw, begin, end string) (string, error) {

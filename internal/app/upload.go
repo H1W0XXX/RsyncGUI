@@ -58,12 +58,13 @@ func (a *App) UploadLocalFile(hostName, dstDir, relPath, localFile string) error
 	if err := os.MkdirAll(stageDir, 0o755); err != nil {
 		return fmt.Errorf("mkdir stage dir: %w", err)
 	}
+	defer os.RemoveAll(stageDir)
+
 	stagedPath := filepath.Join(stageDir, baseName)
 
 	if err := os.Rename(localFile, stagedPath); err != nil {
 		// rename 失败（比如跨盘）就 copy 一份再删原文件
 		if err2 := copyFile(stagedPath, localFile); err2 != nil {
-			_ = os.RemoveAll(stageDir)
 			return fmt.Errorf("stage file failed: rename=%v copy=%v", err, err2)
 		}
 		_ = os.Remove(localFile)
@@ -75,7 +76,6 @@ func (a *App) UploadLocalFile(hostName, dstDir, relPath, localFile string) error
 	clientArgs := []string{"-av", "--protect-args"} // 你要额外参数也可以继续 append
 	rsClient, err := rsyncclient.New(clientArgs, rsyncclient.WithSender())
 	if err != nil {
-		_ = os.RemoveAll(stageDir)
 		return fmt.Errorf("rsyncclient.New(sender): %w", err)
 	}
 
@@ -84,33 +84,28 @@ func (a *App) UploadLocalFile(hostName, dstDir, relPath, localFile string) error
 	if d.Port == 0 {
 		d.Port = 22
 	}
-	sshCli, err := sshDial(&h.Config, d)
+	sshCli, err := sshDial(&h.Config, d, false)
 	if err != nil {
-		_ = os.RemoveAll(stageDir)
 		return err
 	}
 	defer sshCli.Close()
 
 	sess, err := sshCli.NewSession()
 	if err != nil {
-		_ = os.RemoveAll(stageDir)
 		return err
 	}
 	defer sess.Close()
 
 	stdin, err := sess.StdinPipe()
 	if err != nil {
-		_ = os.RemoveAll(stageDir)
 		return err
 	}
 	stdout, err := sess.StdoutPipe()
 	if err != nil {
-		_ = os.RemoveAll(stageDir)
 		return err
 	}
 	stderr, err := sess.StderrPipe()
 	if err != nil {
-		_ = os.RemoveAll(stageDir)
 		return err
 	}
 	// 这里你可以接你已有的 jobLineWriter；UploadLocalFile 没 job，就先丢弃或打印
@@ -120,7 +115,6 @@ func (a *App) UploadLocalFile(hostName, dstDir, relPath, localFile string) error
 	remoteCmd := "cd ~ 2>/dev/null && command rsync " + joinShellArgs(remoteServerArgs)
 
 	if err := sess.Start("sh -c " + shQuote(remoteCmd)); err != nil {
-		_ = os.RemoveAll(stageDir)
 		return fmt.Errorf("start remote rsync server: %w", err)
 	}
 
@@ -131,16 +125,13 @@ func (a *App) UploadLocalFile(hostName, dstDir, relPath, localFile string) error
 
 	if _, err := rsClient.Run(ctx, rw, []string{stagedPath}); err != nil {
 		_ = sess.Close()
-		_ = os.RemoveAll(stageDir)
 		return fmt.Errorf("rsyncclient.Run(sender): %w", err)
 	}
 
 	if err := sess.Wait(); err != nil {
-		_ = os.RemoveAll(stageDir)
 		return fmt.Errorf("remote rsync server exit: %w", err)
 	}
 
-	_ = os.RemoveAll(stageDir)
 	return nil
 }
 

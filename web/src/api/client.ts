@@ -2,6 +2,7 @@ import {
     HostInfo,
     TransferRequest,
     CreateTransferResponse,
+    PreviewResponse,
     Job,
     FSListResult,
 } from "../types/api";
@@ -22,19 +23,22 @@ async function jsonFetch<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
-    async fsHome(hostName: string): Promise<FSListResult> {
-        const res = await fetch(`/api/fs/home?host=${encodeURIComponent(hostName)}`);
+    async fsHome(hostName: string, opts?: { prefetch?: boolean; maxChildren?: number; signal?: AbortSignal }): Promise<FSListResult> {
+        const prefetch = opts?.prefetch ? "1" : "0";
+        const maxChildren = opts?.maxChildren ?? 0;
+        const url = `/api/fs/home?host=${encodeURIComponent(hostName)}&prefetch=${prefetch}&maxChildren=${encodeURIComponent(String(maxChildren))}`;
+        const res = await fetch(url, { signal: opts?.signal });
         if (!res.ok) {
             throw new Error(`fsHome failed: ${res.status} ${await res.text()}`);
         }
         return res.json();
     },
 
-    async fsList(hostName: string, path: string): Promise<FSListResult> {
-        const url = `/api/fs/list?host=${encodeURIComponent(
-            hostName
-        )}&path=${encodeURIComponent(path)}`;
-        const res = await fetch(url);
+    async fsList(hostName: string, path: string, opts?: { prefetch?: boolean; maxChildren?: number; signal?: AbortSignal }): Promise<FSListResult> {
+        const prefetch = opts?.prefetch ? "1" : "0";
+        const maxChildren = opts?.maxChildren ?? 0;
+        const url = `/api/fs/list?host=${encodeURIComponent(hostName)}&path=${encodeURIComponent(path)}&prefetch=${prefetch}&maxChildren=${encodeURIComponent(String(maxChildren))}`;
+        const res = await fetch(url, { signal: opts?.signal });
         if (!res.ok) {
             throw new Error(`fsList failed: ${res.status} ${await res.text()}`);
         }
@@ -48,6 +52,13 @@ export const api = {
 
     async createTransfer(req: TransferRequest): Promise<CreateTransferResponse> {
         return jsonFetch<CreateTransferResponse>("/api/transfers", {
+            method: "POST",
+            body: JSON.stringify(req)
+        });
+    },
+
+    async previewTransfer(req: TransferRequest): Promise<PreviewResponse> {
+        return jsonFetch<PreviewResponse>("/api/preview", {
             method: "POST",
             body: JSON.stringify(req)
         });

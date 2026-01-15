@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"golang.org/x/crypto/ssh"
 	"net"
@@ -17,6 +18,9 @@ import (
 type Host struct {
 	Config  HostConfig
 	IsLocal bool
+
+	sshMu     sync.Mutex
+	sshClient *ssh.Client
 }
 
 type HostRegistry struct {
@@ -79,53 +83,62 @@ func (r *HostRegistry) Local() *Host {
 }
 
 func runSSHGo(h *Host, remoteCmd string) (string, error) {
-	cfg := h.Config
+	h.sshMu.Lock()
+	defer h.sshMu.Unlock()
 
-	auths, err := sshAuthMethods(&cfg)
-	if err != nil {
-		return "", err
+	runOnce := func() (string, error) {
+		client, err := getOrDialSSHClientLocked(h)
+		if err != nil {
+			return "", err
+		}
+
+		sess, err := client.NewSession()
+		if err != nil {
+			return "", err
+		}
+		defer sess.Close()
+
+		// PTY：可选，失败也别影响逻辑（但打印出来方便排查）
+		if err := sess.RequestPty("xterm", 80, 40, ssh.TerminalModes{}); err != nil {
+			fmt.Printf("[ssh] host=%s pty denied: %v\n", h.Config.Name, err)
+		}
+
+		// ✅ 正常模式：不加任何哨兵，避免污染业务输出
+		cmd := "sh -c " + shellQuote(remoteCmd)
+		fmt.Printf("[ssh] host=%s cmd=%q\n", h.Config.Name, cmd)
+
+		b, err := sess.CombinedOutput(cmd)
+		out := string(b)
+
+		// ✅ 永远打印 err（你之前排障痛点）
+		if err != nil {
+			fmt.Printf("[ssh] host=%s ERR=%v out=%q\n", h.Config.Name, err, out)
+			return out, err
+		}
+
+		fmt.Printf("[ssh] host=%s OK out=%q\n", h.Config.Name, out)
+		return out, nil
 	}
 
-	clientCfg := &ssh.ClientConfig{
-		User:            cfg.User,
-		Auth:            auths,
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
-		Timeout:         10 * time.Second,
+	out, err := runOnce()
+	if err == nil {
+		return out, nil
 	}
 
-	addr := net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port))
-	conn, err := ssh.Dial("tcp", addr, clientCfg)
-	if err != nil {
-		return "", err
-	}
-	defer conn.Close()
-
-	sess, err := conn.NewSession()
-	if err != nil {
-		return "", err
-	}
-	defer sess.Close()
-
-	// PTY：可选，失败也别影响逻辑（但打印出来方便排查）
-	if err := sess.RequestPty("xterm", 80, 40, ssh.TerminalModes{}); err != nil {
-		fmt.Printf("[ssh] host=%s pty denied: %v\n", h.Config.Name, err)
-	}
-
-	// ✅ 正常模式：不加任何哨兵，避免污染业务输出
-	cmd := "sh -c " + shellQuote(remoteCmd)
-	fmt.Printf("[ssh] host=%s cmd=%q\n", h.Config.Name, cmd)
-
-	b, err := sess.CombinedOutput(cmd)
-	out := string(b)
-
-	// ✅ 永远打印 err（你之前排障痛点）
-	if err != nil {
-		fmt.Printf("[ssh] host=%s ERR=%v out=%q\n", h.Config.Name, err, out)
+	// 远端命令退出码 != 0：属于业务错误，不要重连重试
+	var exitErr *ssh.ExitError
+	if errors.As(err, &exitErr) {
 		return out, fmt.Errorf("ssh run failed: %w", err)
 	}
 
-	fmt.Printf("[ssh] host=%s OK out=%q\n", h.Config.Name, out)
-	return out, nil
+	// 连接断开/复用连接失效：静默重连重试一次（用户不应看到错误）
+	closeSSHClientLocked(h)
+
+	out2, err2 := runOnce()
+	if err2 != nil {
+		return out2, fmt.Errorf("ssh run failed: %w", err2)
+	}
+	return out2, nil
 }
 
 func sshAuthMethods(cfg *HostConfig) ([]ssh.AuthMethod, error) {
@@ -155,6 +168,43 @@ func sshAuthMethods(cfg *HostConfig) ([]ssh.AuthMethod, error) {
 	}
 
 	return out, nil
+}
+
+func getOrDialSSHClientLocked(h *Host) (*ssh.Client, error) {
+	if h.sshClient != nil {
+		return h.sshClient, nil
+	}
+
+	cfg := h.Config
+
+	auths, err := sshAuthMethods(&cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	clientCfg := &ssh.ClientConfig{
+		User:            cfg.User,
+		Auth:            auths,
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Timeout:         10 * time.Second,
+	}
+
+	addr := net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port))
+	client, err := ssh.Dial("tcp", addr, clientCfg)
+	if err != nil {
+		return nil, err
+	}
+
+	h.sshClient = client
+	return client, nil
+}
+
+func closeSSHClientLocked(h *Host) {
+	if h.sshClient == nil {
+		return
+	}
+	_ = h.sshClient.Close()
+	h.sshClient = nil
 }
 
 // shellQuote: 用单引号包住，内部单引号安全转义

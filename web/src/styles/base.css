@@ -13,13 +13,64 @@
     --text-main: #e5e7eb;
     --text-muted: #9ca3af;
     --danger: #ef4444;
+
+    --bg-gradient: radial-gradient(circle at top, #151c27 0, #05070a 55%);
+    --top-bar-bg: rgba(10, 14, 20, 0.9);
+
+    --card-bg-gradient: radial-gradient(circle at top left, #1a2330 0, #0c1017 60%);
+    --card-shadow: 0 14px 30px rgba(0, 0, 0, 0.35);
+    
+    --input-bg: #020509;
+    --drop-zone-bg: rgba(15, 23, 42, 0.7);
+    --dir-btn-bg: #020617;
+    
+    --job-item-bg: rgba(15, 23, 42, 0.75);
+    --job-item-border: #111827;
+    --job-logs-bg: #020617;
+    --job-mode-tag-border: #1f2933;
+    
+    --fs-browser-bg: rgba(15, 23, 42, 0.85);
+    --fs-browser-border: #111827;
+    --fs-item-hover-bg: rgba(31, 41, 55, 0.9);
+    --fs-item-selected-bg: rgba(59, 130, 246, 0.25);
+}
+
+[data-theme="light"] {
+    --bg: #ffffff;
+    --bg-elevated: #f3f4f6;
+    --border-subtle: #e5e7eb;
+    --accent: #2563eb;
+    --accent-soft: rgba(37, 99, 235, 0.1);
+    --text-main: #1f2937;
+    --text-muted: #6b7280;
+    --danger: #dc2626;
+
+    --bg-gradient: radial-gradient(circle at top, #f9fafb 0, #f3f4f6 100%);
+    --top-bar-bg: rgba(255, 255, 255, 0.9);
+
+    --card-bg-gradient: linear-gradient(to bottom right, #ffffff, #f3f4f6);
+    --card-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+
+    --input-bg: #ffffff;
+    --drop-zone-bg: #f9fafb;
+    --dir-btn-bg: #ffffff;
+
+    --job-item-bg: #ffffff;
+    --job-item-border: #e5e7eb;
+    --job-logs-bg: #f3f4f6;
+    --job-mode-tag-border: #e5e7eb;
+
+    --fs-browser-bg: #ffffff;
+    --fs-browser-border: #e5e7eb;
+    --fs-item-hover-bg: #f3f4f6;
+    --fs-item-selected-bg: rgba(37, 99, 235, 0.15);
 }
 
 html,
 body {
     margin: 0;
     padding: 0;
-    background: radial-gradient(circle at top, #151c27 0, #05070a 55%);
+    background: var(--bg-gradient);
     color: var(--text-main);
     font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
     sans-serif;
@@ -43,7 +94,7 @@ body {
     justify-content: space-between;
     padding: 0 20px;
     border-bottom: 1px solid var(--border-subtle);
-    background: rgba(10, 14, 20, 0.9);
+    background: var(--top-bar-bg);
     backdrop-filter: blur(14px);
     position: sticky;
     top: 0;

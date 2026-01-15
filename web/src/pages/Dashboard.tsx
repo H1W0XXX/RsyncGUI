@@ -5,8 +5,12 @@ import TransferOptions from "../components/TransferOptions";
 import JobsPanel from "../components/JobsPanel";
 import { api } from "../api/client";
 import { HostInfo, Endpoint, RsyncOptions, TransferRequest, Job } from "../types/api";
+import { useTheme } from "../context/ThemeContext";
+import { useTranslation } from "react-i18next";
 
 const Dashboard: React.FC = () => {
+    const { theme, toggleTheme } = useTheme();
+    const { t, i18n } = useTranslation();
     const [selectedA, setSelectedA] = useState<string[]>([]);
     const [selectedB, setSelectedB] = useState<string[]>([]);
 
@@ -31,6 +35,8 @@ const Dashboard: React.FC = () => {
 
     const [jobs, setJobs] = useState<Job[]>([]);
     const [creating, setCreating] = useState(false);
+    const [previewData, setPreviewData] = useState<string | null>(null);
+    const [previewing, setPreviewing] = useState(false);
 
     // --- path utils（和 EndpointPanel 一致的风格，避免 Windows/WSL 拼错） ---
     function pathStyle(p: string): "win" | "posix" {
@@ -96,20 +102,11 @@ const Dashboard: React.FC = () => {
         return () => clearInterval(id);
     }, []);
 
-    const handleCreateTransfer = async () => {
-        if (!endpointA.hostName || !endpointB.hostName) {
-            alert("两边 host 都要选上。");
-            return;
-        }
-        if (!endpointA.path || !endpointB.path) {
-            alert("两边 path 都要填。");
-            return;
-        }
-
+    const buildRequests = () => {
         const srcNames = direction === "A_to_B" ? uniqNames(selectedA) : uniqNames(selectedB);
         const namesToSubmit: (string | null)[] = srcNames.length ? srcNames : [null];
 
-        const reqs: TransferRequest[] = namesToSubmit.map((name) => {
+        return namesToSubmit.map((name) => {
             let finalEndpointA: Endpoint = endpointA;
             let finalEndpointB: Endpoint = endpointB;
 
@@ -129,6 +126,19 @@ const Dashboard: React.FC = () => {
                 options,
             };
         });
+    };
+
+    const handleCreateTransfer = async () => {
+        if (!endpointA.hostName || !endpointB.hostName) {
+            alert(t("dashboard.alert_host_missing"));
+            return;
+        }
+        if (!endpointA.path || !endpointB.path) {
+            alert(t("dashboard.alert_path_missing"));
+            return;
+        }
+
+        const reqs = buildRequests();
 
         setCreating(true);
         try {
@@ -147,12 +157,15 @@ const Dashboard: React.FC = () => {
             }
 
             if (badMsgs.length === 0) {
-                alert(`Jobs created (${okIds.length}): ${okIds.join(", ")}`);
+                alert(t("dashboard.alert_jobs_created", { count: okIds.length, ids: okIds.join(", ") }));
             } else {
                 alert(
-                    `Jobs created: ${okIds.length}/${results.length}\n` +
-                    (okIds.length ? `OK: ${okIds.join(", ")}\n` : "") +
-                    `Failed:\n${badMsgs.slice(0, 8).join("\n")}${badMsgs.length > 8 ? "\n..." : ""}`
+                    t("dashboard.alert_jobs_failed", {
+                        ok: okIds.length,
+                        total: results.length,
+                        okIds: okIds.length ? okIds.join(", ") : "",
+                        failedMsgs: badMsgs.slice(0, 8).join("\n") + (badMsgs.length > 8 ? "\n..." : "")
+                    })
                 );
             }
 
@@ -164,12 +177,68 @@ const Dashboard: React.FC = () => {
         }
     };
 
+    const handlePreview = async () => {
+        if (!endpointA.hostName || !endpointB.hostName) {
+            alert(t("dashboard.alert_host_missing"));
+            return;
+        }
+        if (!endpointA.path || !endpointB.path) {
+            alert(t("dashboard.alert_path_missing"));
+            return;
+        }
+
+        const reqs = buildRequests();
+        setPreviewing(true);
+        try {
+            const results = await Promise.all(reqs.map(r => api.previewTransfer(r)));
+            const cmds = results.map(r => r.command).join("\n\n");
+            setPreviewData(cmds);
+        } catch (err: any) {
+            alert(err.message || String(err));
+        } finally {
+            setPreviewing(false);
+        }
+    };
+
+    const toggleLanguage = () => {
+        const nextLang = i18n.language === "en" ? "zh" : "en";
+        i18n.changeLanguage(nextLang);
+    };
+
     return (
         <div className="page-root">
             <header className="top-bar">
-                <div className="brand">Rsync GUI</div>
-                <div className="top-bar-right">
-                    <span className="top-hint">私钥只在本机，远程用 ssh/rsync 传输。</span>
+                <div className="brand">{t("top_bar.title")}</div>
+                <div className="top-bar-right" style={{ display: "flex", alignItems: "center", gap: "16px" }}>
+                    <button
+                        onClick={toggleLanguage}
+                        style={{
+                            background: "transparent",
+                            border: "1px solid var(--border-subtle)",
+                            color: "var(--text-main)",
+                            padding: "4px 8px",
+                            borderRadius: "4px",
+                            cursor: "pointer",
+                            fontSize: "12px",
+                        }}
+                    >
+                        {i18n.language === "en" ? "🇺🇸 English" : "🇨🇳 中文"}
+                    </button>
+                    <button
+                        onClick={toggleTheme}
+                        style={{
+                            background: "transparent",
+                            border: "1px solid var(--border-subtle)",
+                            color: "var(--text-main)",
+                            padding: "4px 8px",
+                            borderRadius: "4px",
+                            cursor: "pointer",
+                            fontSize: "12px",
+                        }}
+                    >
+                        {theme === "dark" ? t("top_bar.theme_light") : t("top_bar.theme_dark")}
+                    </button>
+                    <span className="top-hint">{t("top_bar.hint")}</span>
                 </div>
             </header>
 
@@ -177,7 +246,7 @@ const Dashboard: React.FC = () => {
                 <section className="layout-row main-layout">
                     <div className="endpoint-wrapper">
                         <EndpointPanel
-                            title="Endpoint A"
+                            title={t("dashboard.endpoint_a")}
                             hosts={hosts}
                             value={endpointA}
                             onChange={setEndpointA}
@@ -189,13 +258,29 @@ const Dashboard: React.FC = () => {
                     <div className="center-column">
                         <DirectionSwitch direction={direction} onChange={setDirection} />
 
-                        <button
-                            className="primary-btn"
-                            onClick={handleCreateTransfer}
-                            disabled={creating || loadingHosts}
-                        >
-                            {creating ? "Creating..." : "Sync"}
-                        </button>
+                        <div style={{ display: "flex", gap: "8px" }}>
+                            <button
+                                className="primary-btn"
+                                onClick={handleCreateTransfer}
+                                disabled={creating || loadingHosts}
+                                style={{ flex: 1 }}
+                            >
+                                {creating ? t("dashboard.creating") : t("dashboard.sync_btn")}
+                            </button>
+                            <button
+                                className="primary-btn"
+                                onClick={handlePreview}
+                                disabled={previewing || loadingHosts}
+                                style={{
+                                    flex: 1,
+                                    backgroundColor: "var(--bg-elevated)",
+                                    border: "1px solid var(--border-subtle)",
+                                    color: "var(--text-main)"
+                                }}
+                            >
+                                {previewing ? "..." : t("dashboard.preview_btn")}
+                            </button>
+                        </div>
 
                         <TransferOptions
                             value={options}
@@ -207,7 +292,7 @@ const Dashboard: React.FC = () => {
 
                     <div className="endpoint-wrapper">
                         <EndpointPanel
-                            title="Endpoint B"
+                            title={t("dashboard.endpoint_b")}
                             hosts={hosts}
                             value={endpointB}
                             onChange={setEndpointB}
@@ -221,6 +306,94 @@ const Dashboard: React.FC = () => {
                     <JobsPanel jobs={jobs} onRefresh={refreshJobs} />
                 </section>
             </main>
+
+            {previewData !== null && (
+                <div style={{
+                    position: "fixed",
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    background: "rgba(0,0,0,0.6)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    zIndex: 100,
+                    backdropFilter: "blur(4px)"
+                }}>
+                    <div style={{
+                        background: "var(--bg)",
+                        border: "1px solid var(--border-subtle)",
+                        borderRadius: "12px",
+                        width: "800px",
+                        maxWidth: "90vw",
+                        maxHeight: "80vh",
+                        display: "flex",
+                        flexDirection: "column",
+                        boxShadow: "0 20px 40px rgba(0,0,0,0.5)"
+                    }}>
+                        <div style={{
+                            padding: "16px 20px",
+                            borderBottom: "1px solid var(--border-subtle)",
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "center"
+                        }}>
+                            <h3 style={{ margin: 0, fontSize: "16px" }}>{t("dashboard.preview_title")}</h3>
+                            <button
+                                onClick={() => setPreviewData(null)}
+                                style={{
+                                    background: "transparent",
+                                    border: "none",
+                                    color: "var(--text-muted)",
+                                    cursor: "pointer",
+                                    fontSize: "20px"
+                                }}
+                            >
+                                ×
+                            </button>
+                        </div>
+                        <div style={{
+                            padding: "20px",
+                            overflowY: "auto",
+                            flex: 1
+                        }}>
+                            <pre style={{
+                                margin: 0,
+                                whiteSpace: "pre-wrap",
+                                fontFamily: "monospace",
+                                fontSize: "13px",
+                                color: "var(--text-main)",
+                                background: "var(--bg-elevated)",
+                                padding: "12px",
+                                borderRadius: "8px",
+                                border: "1px solid var(--border-subtle)"
+                            }}>
+                                {previewData}
+                            </pre>
+                        </div>
+                        <div style={{
+                            padding: "16px 20px",
+                            borderTop: "1px solid var(--border-subtle)",
+                            textAlign: "right"
+                        }}>
+                            <button
+                                onClick={() => setPreviewData(null)}
+                                style={{
+                                    padding: "8px 16px",
+                                    borderRadius: "6px",
+                                    border: "1px solid var(--border-subtle)",
+                                    background: "var(--bg-elevated)",
+                                    color: "var(--text-main)",
+                                    cursor: "pointer"
+                                }}
+                            >
+                                {t("dashboard.preview_close")}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };

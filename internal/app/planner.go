@@ -53,6 +53,10 @@ func (a *App) PlanTransfer(req TransferRequest) (*TransferPlan, error) {
 	}
 
 	// 2. 决定执行模式
+	if srcHost.IsLocal && dstHost.IsLocal {
+		return nil, fmt.Errorf("local to local transfer is not allowed")
+	}
+
 	if srcHost.IsLocal || dstHost.IsLocal {
 		// 一端是本机 → 在本机跑 rsync
 		plan.Mode = ExecLocal

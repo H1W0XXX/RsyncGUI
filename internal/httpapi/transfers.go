@@ -63,3 +63,36 @@ func (s *Server) handleTransfers(w http.ResponseWriter, r *http.Request) {
 		Precheck: precheck,
 	})
 }
+
+// POST /api/preview
+func (s *Server) handlePreview(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req app.TransferRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	plan, err := s.app.PlanTransfer(req)
+	if err != nil {
+		http.Error(w, "plan error: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	cmd, err := s.app.JobManager.PreviewCommand(req, plan)
+	if err != nil {
+		http.Error(w, "preview error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(struct {
+		Command string `json:"command"`
+	}{
+		Command: cmd,
+	})
+}

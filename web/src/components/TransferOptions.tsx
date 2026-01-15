@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { RsyncOptions } from "../types/api";
+import { useTranslation } from "react-i18next";
 
 export type ExecSide = "auto" | "source" | "dest";
 
@@ -56,6 +57,7 @@ const TransferOptions: React.FC<Props> = ({
                                               execSide,
                                               onExecSideChange,
                                           }) => {
+    const { t } = useTranslation();
     const set = (patch: Partial<RsyncOptions>) => onChange({ ...value, ...patch });
 
     // ✅ 关键：不要直接 value.extraArgs.join(" ") 作为受控输入，否则末尾空格会被吞
@@ -87,14 +89,17 @@ const TransferOptions: React.FC<Props> = ({
             <div className="field">
                 <label>Profile</label>
                 <div className="pill-row">
-                    {["WAN", "LAN", "Custom"].map((p) => (
+                    {[
+                        { k: "LAN", t: t("transfer_options.profile_lan") },
+                        { k: "WAN", t: t("transfer_options.profile_wan") }
+                    ].map((p) => (
                         <button
-                            key={p}
+                            key={p.k}
                             type="button"
-                            className={"pill-btn" + (value.profile === p ? " selected" : "")}
-                            onClick={() => set({ profile: p as any })}
+                            className={"pill-btn" + (value.profile === p.k ? " selected" : "")}
+                            onClick={() => set({ profile: p.k as any })}
                         >
-                            {p}
+                            {p.t}
                         </button>
                     ))}
                 </div>
@@ -105,9 +110,9 @@ const TransferOptions: React.FC<Props> = ({
                 <div className="pill-row">
                     {(
                         [
-                            { k: "auto", t: "Auto" },
-                            { k: "source", t: "Run on Source" },
-                            { k: "dest", t: "Run on Dest" },
+                            { k: "auto", t: t("transfer_options.exec_side_auto") },
+                            { k: "source", t: t("transfer_options.exec_side_source") },
+                            { k: "dest", t: t("transfer_options.exec_side_dest") },
                         ] as const
                     ).map((p) => (
                         <button
@@ -129,7 +134,7 @@ const TransferOptions: React.FC<Props> = ({
                         checked={value.archive}
                         onChange={(e) => set({ archive: e.target.checked })}
                     />
-                    Archive (-a)
+                    {t("transfer_options.option_archive")}
                 </label>
                 <label>
                     <input
@@ -137,7 +142,7 @@ const TransferOptions: React.FC<Props> = ({
                         checked={value.compress}
                         onChange={(e) => set({ compress: e.target.checked })}
                     />
-                    Compress (-z)
+                    {t("transfer_options.option_compress")}
                 </label>
                 <label>
                     <input
@@ -145,7 +150,7 @@ const TransferOptions: React.FC<Props> = ({
                         checked={value.delete}
                         onChange={(e) => set({ delete: e.target.checked })}
                     />
-                    Delete (--delete)
+                    {t("transfer_options.option_delete")}
                 </label>
                 <label>
                     <input
@@ -153,7 +158,7 @@ const TransferOptions: React.FC<Props> = ({
                         checked={value.dryRun}
                         onChange={(e) => set({ dryRun: e.target.checked })}
                     />
-                    Dry-run
+                    {t("transfer_options.option_dry_run")}
                 </label>
             </div>
 
@@ -164,6 +169,7 @@ const TransferOptions: React.FC<Props> = ({
                     min={0}
                     value={value.bwlimit}
                     onChange={(e) => set({ bwlimit: Number(e.target.value || 0) })}
+                    placeholder={t("transfer_options.bwlimit_placeholder")}
                 />
             </div>
 
@@ -171,7 +177,7 @@ const TransferOptions: React.FC<Props> = ({
                 <label>Extra args (space separated)</label>
                 <input
                     type="text"
-                    placeholder="--progress --partial"
+                    placeholder={t("transfer_options.extra_args_placeholder")}
                     value={extraArgsText}
                     onChange={(e) => setExtraArgsText(e.target.value)} // ✅ 不在这里 split，避免吞尾空格
                     onBlur={commitExtraArgs} // ✅ 失焦再解析写回数组

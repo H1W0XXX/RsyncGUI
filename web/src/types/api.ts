@@ -78,6 +78,10 @@ export interface CreateTransferResponse {
     precheck: PrecheckResult;
 }
 
+export interface PreviewResponse {
+    command: string;
+}
+
 
 export interface FSEntry {
     name: string;
@@ -93,4 +97,7 @@ export interface FSEntry {
 export interface FSListResult {
     cwd: string;
     entries: FSEntry[];
+
+    // 预取：1 级子目录内容（key=子目录名）
+    children?: Record<string, FSEntry[]>;
 }

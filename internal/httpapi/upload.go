@@ -53,12 +53,21 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tmpPath := tmpFile.Name()
-	defer tmpFile.Close()
-	defer os.Remove(tmpPath)
+	defer func() {
+		_ = os.Remove(tmpPath)
+		_ = removeDirIfEmpty(tmpDir)
+	}()
 
 	if _, err := io.Copy(tmpFile, file); err != nil {
+		_ = tmpFile.Close()
 		_ = os.Remove(tmpPath)
 		http.Error(w, "write temp file: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	// Windows 下打开的文件无法 rename/remove；先 close 再进入 app 层做传输与移动
+	if err := tmpFile.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		http.Error(w, "close temp file: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -82,4 +91,15 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		Path:     dstPath,
 		FileName: baseName,
 	})
+}
+
+func removeDirIfEmpty(dir string) error {
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	if len(ents) != 0 {
+		return nil
+	}
+	return os.Remove(dir)
 }

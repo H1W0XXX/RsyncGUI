@@ -241,6 +241,124 @@ func buildRsyncArgs(opts *RsyncOptions) []string {
 	return args
 }
 
+// PreviewCommand 生成“如果执行该任务，等效的 rsync 命令是什么”
+func (m *JobManager) PreviewCommand(req TransferRequest, plan *TransferPlan) (string, error) {
+	useLan := decideUseLan(req)
+
+	srcHostName := plan.Source.HostName
+	dstHostName := plan.Dest.HostName
+
+	// 1. 本机 <-> 本机
+	if plan.Mode == ExecLocal && srcHostName == "local" && dstHostName == "local" {
+		args := buildRsyncArgs(&req.Options)
+		args = append(args, plan.Source.Path, plan.Dest.Path)
+		return "rsync " + joinShellArgs(args), nil
+	}
+
+	// 2. 本机 -> 远程 (Go Native, 模拟显示 rsync 命令)
+	if plan.Mode == ExecLocal && srcHostName == "local" && dstHostName != "local" {
+		remoteHost, err := m.getHost(dstHostName)
+		if err != nil {
+			return "", err
+		}
+		d := dialFor(&remoteHost.Config, useLan)
+		
+		// rsync [args] src user@host:dst
+		args := buildRsyncArgs(&req.Options)
+		
+		sshCmd := "ssh"
+		if d.Port != 22 {
+			sshCmd += fmt.Sprintf(" -p %d", d.Port)
+		}
+		if useLan {
+			sshCmd += " -c aes128-gcm@openssh.com"
+		}
+		
+		if sshCmd != "ssh" {
+			args = append(args, "-e", sshCmd)
+		}
+		
+		dstSpec := fmt.Sprintf("%s@%s:%s", remoteHost.Config.User, d.Host, plan.Dest.Path)
+		args = append(args, plan.Source.Path, dstSpec)
+		
+		return "# (Go-native transfer, equivalent to:)\nrsync " + joinShellArgs(args), nil
+	}
+
+	// 3. 远程 -> 本机 (Go Native, 模拟显示 rsync 命令)
+	if plan.Mode == ExecLocal && srcHostName != "local" && dstHostName == "local" {
+		remoteHost, err := m.getHost(srcHostName)
+		if err != nil {
+			return "", err
+		}
+		d := dialFor(&remoteHost.Config, useLan)
+		
+		args := buildRsyncArgs(&req.Options)
+		
+		sshCmd := "ssh"
+		if d.Port != 22 {
+			sshCmd += fmt.Sprintf(" -p %d", d.Port)
+		}
+		if useLan {
+			sshCmd += " -c aes128-gcm@openssh.com"
+		}
+
+		if sshCmd != "ssh" {
+			args = append(args, "-e", sshCmd)
+		}
+
+		srcSpec := fmt.Sprintf("%s@%s:%s", remoteHost.Config.User, d.Host, plan.Source.Path)
+		args = append(args, srcSpec, plan.Dest.Path)
+		
+		return "# (Go-native transfer, equivalent to:)\nrsync " + joinShellArgs(args), nil
+	}
+
+	// 4. 远程 <-> 远程 (OneHopSSH)
+	if plan.Mode == ExecOnSource || plan.Mode == ExecOnDest {
+		execHost, err := m.getHost(plan.ExecHost)
+		if err != nil {
+			return "", err
+		}
+		
+		execIsSource := plan.ExecHost == plan.Source.HostName
+		// innerTarget = execHost 要连接的“另一端”
+		var innerTarget *Host
+		if execIsSource {
+			innerTarget, err = m.getHost(dstHostName)
+		} else {
+			innerTarget, err = m.getHost(srcHostName)
+		}
+		if err != nil {
+			return "", err
+		}
+
+		// 组 inner ssh
+		innerDial := dialFor(&innerTarget.Config, useLan)
+		innerSSH := buildInnerSSHCommand(innerTarget.Config, innerDial, useLan)
+
+		args := buildRsyncArgs(&req.Options)
+		args = append(args, "--protect-args", "-e", innerSSH)
+
+		var srcSpec, dstSpec string
+		if execIsSource {
+			// execHost=source：src 是本地路径；dst 是 user@host:path
+			srcSpec = plan.Source.Path
+			dstSpec = fmt.Sprintf("%s@%s:%s", innerTarget.Config.User, innerDial.Host, plan.Dest.Path)
+		} else {
+			// execHost=dest：src 是 user@host:path；dst 是本地路径
+			srcSpec = fmt.Sprintf("%s@%s:%s", innerTarget.Config.User, innerDial.Host, plan.Source.Path)
+			dstSpec = plan.Dest.Path
+		}
+
+		cmdStr := "rsync " + joinShellArgs(args) + " " + shQuote(srcSpec) + " " + shQuote(dstSpec)
+		
+		// 还要显示它是跑在哪台机器上的
+		prefix := fmt.Sprintf("# Run on host: %s\n", execHost.Config.Name)
+		return prefix + cmdStr, nil
+	}
+
+	return "", fmt.Errorf("unsupported plan mode: %s", plan.Mode)
+}
+
 // ============================
 // 1) local <-> local（不依赖外部 rsync：用 rsynccmd 最简单，但你现在没引它也行）
 // 这里先用系统 rsync（你如果要彻底去掉外部依赖，我再给你换 rsynccmd 版）
@@ -285,7 +403,7 @@ func (m *JobManager) runLocalToRemote_GoRsync(job *Job, ctx context.Context) err
 		return fmt.Errorf("rsyncclient.New(sender): %w", err)
 	}
 
-	sshCli, err := sshDial(&remoteHost.Config, d)
+	sshCli, err := sshDial(&remoteHost.Config, d, useLan)
 	if err != nil {
 		return err
 	}
@@ -362,7 +480,7 @@ func (m *JobManager) runRemoteToLocal_GoRsync(job *Job, ctx context.Context) err
 		return fmt.Errorf("rsyncclient.New(receiver): %w", err)
 	}
 
-	sshCli, err := sshDial(&remoteHost.Config, d)
+	sshCli, err := sshDial(&remoteHost.Config, d, useLan)
 	if err != nil {
 		return err
 	}
@@ -473,7 +591,7 @@ func (m *JobManager) runRemoteToRemote_OneHopSSH(job *Job, ctx context.Context) 
 	)
 	job.mu.Unlock()
 
-	sshCli, err := sshDial(&execHost.Config, execDial)
+	sshCli, err := sshDial(&execHost.Config, execDial, false)
 	if err != nil {
 		return err
 	}
@@ -506,7 +624,7 @@ func (m *JobManager) runRemoteToRemote_OneHopSSH(job *Job, ctx context.Context) 
 
 	// 组 inner ssh / rsync 命令
 	innerDial := dialFor(&innerTarget.Config, useLan)
-	innerSSH := buildInnerSSHCommand(innerTarget.Config, innerDial)
+	innerSSH := buildInnerSSHCommand(innerTarget.Config, innerDial, useLan)
 
 	args := buildRsyncArgs(&req.Options)
 	args = append(args, "--protect-args", "-e", innerSSH)
@@ -557,7 +675,7 @@ func forwardKeysToExecHost(sshCli *ssh.Client, keyPaths []string) error {
 }
 
 // ===== SSH Dial（Go 内置，支持 key 或 password）=====
-func sshDial(cfg *HostConfig, d DialTarget) (*ssh.Client, error) {
+func sshDial(cfg *HostConfig, d DialTarget, useLan bool) (*ssh.Client, error) {
 	addr := net.JoinHostPort(d.Host, strconv.Itoa(d.Port))
 
 	auths, err := buildSSHAuthMethods(cfg)
@@ -570,6 +688,11 @@ func sshDial(cfg *HostConfig, d DialTarget) (*ssh.Client, error) {
 		Auth:            auths,
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 		Timeout:         10 * time.Second,
+	}
+
+	if useLan {
+		// 局域网模式下使用更快的加密算法
+		cc.Ciphers = []string{"aes128-gcm@openssh.com", "aes128-ctr", "aes192-ctr", "aes256-ctr"}
 	}
 
 	netConn, err := net.DialTimeout("tcp", addr, 10*time.Second)
@@ -634,7 +757,7 @@ func readPrivateKeyObject(keyPath string) (any, error) {
 }
 
 // inner ssh：execHost -> 另一台（支持：key 走 agent；password 走 sshpass）
-func buildInnerSSHCommand(target HostConfig, d DialTarget) string {
+func buildInnerSSHCommand(target HostConfig, d DialTarget, useLan bool) string {
 	base := []string{}
 
 	// password：要求 execHost 上有 sshpass
@@ -658,6 +781,11 @@ func buildInnerSSHCommand(target HostConfig, d DialTarget) string {
 		"-o", "ServerAliveInterval=15",
 		"-o", "ServerAliveCountMax=2",
 	)
+
+	if useLan {
+		// 局域网模式添加快速加密算法
+		base = append(base, "-c", "aes128-gcm@openssh.com")
+	}
 
 	return strings.Join(base, " ")
 }
