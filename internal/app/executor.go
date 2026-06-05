@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -262,10 +263,10 @@ func (m *JobManager) PreviewCommand(req TransferRequest, plan *TransferPlan) (st
 			return "", err
 		}
 		d := dialFor(&remoteHost.Config, useLan)
-		
+
 		// rsync [args] src user@host:dst
 		args := buildRsyncArgs(&req.Options)
-		
+
 		sshCmd := "ssh"
 		if d.Port != 22 {
 			sshCmd += fmt.Sprintf(" -p %d", d.Port)
@@ -273,14 +274,14 @@ func (m *JobManager) PreviewCommand(req TransferRequest, plan *TransferPlan) (st
 		if useLan {
 			sshCmd += " -c aes128-gcm@openssh.com"
 		}
-		
+
 		if sshCmd != "ssh" {
 			args = append(args, "-e", sshCmd)
 		}
-		
+
 		dstSpec := fmt.Sprintf("%s@%s:%s", remoteHost.Config.User, d.Host, plan.Dest.Path)
 		args = append(args, plan.Source.Path, dstSpec)
-		
+
 		return "# (Go-native transfer, equivalent to:)\nrsync " + joinShellArgs(args), nil
 	}
 
@@ -291,9 +292,9 @@ func (m *JobManager) PreviewCommand(req TransferRequest, plan *TransferPlan) (st
 			return "", err
 		}
 		d := dialFor(&remoteHost.Config, useLan)
-		
+
 		args := buildRsyncArgs(&req.Options)
-		
+
 		sshCmd := "ssh"
 		if d.Port != 22 {
 			sshCmd += fmt.Sprintf(" -p %d", d.Port)
@@ -308,7 +309,7 @@ func (m *JobManager) PreviewCommand(req TransferRequest, plan *TransferPlan) (st
 
 		srcSpec := fmt.Sprintf("%s@%s:%s", remoteHost.Config.User, d.Host, plan.Source.Path)
 		args = append(args, srcSpec, plan.Dest.Path)
-		
+
 		return "# (Go-native transfer, equivalent to:)\nrsync " + joinShellArgs(args), nil
 	}
 
@@ -318,7 +319,7 @@ func (m *JobManager) PreviewCommand(req TransferRequest, plan *TransferPlan) (st
 		if err != nil {
 			return "", err
 		}
-		
+
 		execIsSource := plan.ExecHost == plan.Source.HostName
 		// innerTarget = execHost 要连接的“另一端”
 		var innerTarget *Host
@@ -350,7 +351,7 @@ func (m *JobManager) PreviewCommand(req TransferRequest, plan *TransferPlan) (st
 		}
 
 		cmdStr := "rsync " + joinShellArgs(args) + " " + shQuote(srcSpec) + " " + shQuote(dstSpec)
-		
+
 		// 还要显示它是跑在哪台机器上的
 		prefix := fmt.Sprintf("# Run on host: %s\n", execHost.Config.Name)
 		return prefix + cmdStr, nil
@@ -409,6 +410,14 @@ func (m *JobManager) runLocalToRemote_GoRsync(job *Job, ctx context.Context) err
 	}
 	defer sshCli.Close()
 
+	transport, err := probeRemoteUploadTransport(ctx, sshCli, w)
+	if err != nil {
+		return err
+	}
+	if transport == remoteUploadTransportSCP {
+		return m.runLocalToRemote_SCP(job, ctx, sshCli, remoteHost, d)
+	}
+
 	sess, err := sshCli.NewSession()
 	if err != nil {
 		return err
@@ -458,6 +467,80 @@ func (m *JobManager) runLocalToRemote_GoRsync(job *Job, ctx context.Context) err
 
 	w.Flush()
 	return nil
+}
+
+func (m *JobManager) runLocalToRemote_SCP(job *Job, ctx context.Context, sshCli *ssh.Client, remoteHost *Host, d DialTarget) error {
+	if err := ensureScpFallbackSafe(&job.Request.Options); err != nil {
+		return err
+	}
+
+	dst := job.Plan.Dest.Path
+	src := job.Plan.Source.Path
+
+	w := &jobLineWriter{job: job}
+	job.mu.Lock()
+	job.LogLines = append(job.LogLines,
+		fmt.Sprintf("[go-scp] ssh %s@%s:%d  mkdir -p %s && scp -r -t %s",
+			remoteHost.Config.User, d.Host, d.Port, shQuote(dst), shQuote(dst),
+		),
+	)
+	for _, warning := range scpFallbackWarnings(&job.Request.Options) {
+		job.LogLines = append(job.LogLines, warning)
+	}
+	job.mu.Unlock()
+
+	sendContents := pathHasTrailingSeparator(src)
+	if job.Request.Options.Compress {
+		job.mu.Lock()
+		job.LogLines = append(job.LogLines, "[go-scp] compression requested; using tar.gz stream over ssh")
+		job.mu.Unlock()
+		if err := tarGzipSendLocalPath(ctx, sshCli, src, dst, sendContents, w); err != nil {
+			w.Flush()
+			return fmt.Errorf("compressed fallback transfer: %w", err)
+		}
+		w.Flush()
+		return nil
+	}
+
+	if err := scpSendLocalPath(ctx, sshCli, src, dst, sendContents, w); err != nil {
+		w.Flush()
+		return fmt.Errorf("scp fallback transfer: %w", err)
+	}
+
+	w.Flush()
+	return nil
+}
+
+func ensureScpFallbackSafe(opts *RsyncOptions) error {
+	if opts.DryRun {
+		return fmt.Errorf("remote rsync unavailable; scp fallback refuses --dry-run because it would perform a real copy")
+	}
+	return nil
+}
+
+func scpFallbackWarnings(opts *RsyncOptions) []string {
+	var ignored []string
+	if opts.Delete {
+		ignored = append(ignored, "--delete")
+	}
+	if opts.BwLimit > 0 {
+		ignored = append(ignored, "--bwlimit")
+	}
+	if len(opts.ExtraArgs) > 0 {
+		ignored = append(ignored, "extra rsync args")
+	}
+	if len(ignored) == 0 {
+		return nil
+	}
+	return []string{"[go-scp] ignoring rsync-only options in fallback: " + strings.Join(ignored, ", ")}
+}
+
+func pathHasTrailingSeparator(path string) bool {
+	if path == "" {
+		return false
+	}
+	last := path[len(path)-1]
+	return last == '/' || last == filepath.Separator
 }
 
 // ============================
@@ -578,7 +661,7 @@ func (m *JobManager) runRemoteToRemote_OneHopSSH(job *Job, ctx context.Context) 
 	} else {
 		innerTarget = srcHost
 	}
-	
+
 	// 连接 execHost（第一跳）
 	execDial := dialFor(&execHost.Config, false)
 

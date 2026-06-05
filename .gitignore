@@ -8,7 +8,10 @@
 # 忽略 IDEA 的项目配置文件
 .idea/
 AIdata/
-dist/
+/dist/
+web/dist/
+!internal/uiembed/web/dist/
+!internal/uiembed/web/dist/**
 
 素材/
 # 忽略系统文件
@@ -23,6 +26,10 @@ Thumbs.db
 
 *.csv
 *.json
+!web/package.json
+!web/package-lock.json
+!web/tsconfig.json
+!web/src/locales/*.json
 *.gz
 
 
@@ -33,6 +40,6 @@ Thumbs.db
 *.so
 *.yaml
 
-rsyncgui
+/rsyncgui
 
 *.go_

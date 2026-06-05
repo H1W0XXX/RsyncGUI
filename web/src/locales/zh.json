@@ -1,0 +1,59 @@
+{
+  "top_bar": {
+    "title": "Rsync GUI",
+    "theme_light": "☀️ 亮色",
+    "theme_dark": "🌙 深色",
+    "hint": "私钥只在本机，远程用 ssh/rsync 传输。",
+    "lang_en": "English",
+    "lang_zh": "中文"
+  },
+  "dashboard": {
+    "sync_btn": "开始同步",
+    "creating": "创建中...",
+    "alert_host_missing": "两边 host 都要选上。",
+    "alert_path_missing": "两边 path 都要填。",
+    "alert_jobs_created": "任务已创建 ({{count}}): {{ids}}",
+    "alert_jobs_failed": "任务创建结果: {{ok}}/{{total}}\n成功: {{okIds}}\n失败:\n{{failedMsgs}}",
+    "endpoint_a": "端点 A",
+    "endpoint_b": "端点 B",
+    "preview_btn": "预览命令",
+    "preview_title": "命令预览",
+    "preview_close": "关闭"
+  },
+  "endpoint_panel": {
+    "host_local": "本机",
+    "path_placeholder": "/同步/路径",
+    "drop_zone_uploading": "上传中...",
+    "drop_zone_hint": "拖拽文件 / 文件夹到这里，按当前目录结构上传",
+    "alert_upload_select_host": "请选择 Host，并保证 Path 非空，再拖文件/文件夹进来",
+    "alert_upload_complete": "上传完成（共 {{count}} 个文件）",
+    "fs_empty": "目录为空。",
+    "fs_error": "错误: {{message}}",
+    "parent_dir": ".."
+  },
+  "jobs_panel": {
+    "empty_hint": "还没有任务，先配置两端然后点 Sync。",
+    "status_running": "运行中",
+    "status_success": "成功",
+    "status_failed": "失败",
+    "exec_on": "执行主机",
+    "mode": "模式",
+    "mode_local": "本机执行（Go 内置）",
+    "mode_on_source": "在源端执行",
+    "mode_on_dest": "在目的端执行",
+    "mode_two_step_local": "两步（经本机中转）"
+  },
+  "transfer_options": {
+    "profile_lan": "局域网 (快速)",
+    "profile_wan": "广域网",
+    "exec_side_auto": "执行: 自动",
+    "exec_side_source": "执行: 源端",
+    "exec_side_dest": "执行: 目的端",
+    "option_archive": "归档 (-a)",
+    "option_compress": "压缩 (-z)",
+    "option_delete": "删除 (--delete)",
+    "option_dry_run": "试运行 (-n)",
+    "bwlimit_placeholder": "限速 (KB/s)",
+    "extra_args_placeholder": "额外参数 (如 --exclude='*.tmp')"
+  }
+}

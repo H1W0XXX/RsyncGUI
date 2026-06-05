@@ -1,0 +1,59 @@
+{
+  "top_bar": {
+    "title": "Rsync GUI",
+    "theme_light": "☀️ Light",
+    "theme_dark": "🌙 Dark",
+    "hint": "Private key stays local; remote uses ssh/rsync transport.",
+    "lang_en": "English",
+    "lang_zh": "中文"
+  },
+  "dashboard": {
+    "sync_btn": "Sync",
+    "creating": "Creating...",
+    "alert_host_missing": "Both hosts must be selected.",
+    "alert_path_missing": "Both paths must be filled.",
+    "alert_jobs_created": "Jobs created ({{count}}): {{ids}}",
+    "alert_jobs_failed": "Jobs created: {{ok}}/{{total}}\nOK: {{okIds}}\nFailed:\n{{failedMsgs}}",
+    "endpoint_a": "Endpoint A",
+    "endpoint_b": "Endpoint B",
+    "preview_btn": "Preview",
+    "preview_title": "Command Preview",
+    "preview_close": "Close"
+  },
+  "endpoint_panel": {
+    "host_local": "Localhost",
+    "path_placeholder": "/path/to/sync",
+    "drop_zone_uploading": "Uploading...",
+    "drop_zone_hint": "Drag files / folders here to upload to current path",
+    "alert_upload_select_host": "Please select Host and ensure Path is not empty before dragging files/folders.",
+    "alert_upload_complete": "Upload complete ({{count}} files).",
+    "fs_empty": "Directory is empty.",
+    "fs_error": "Error: {{message}}",
+    "parent_dir": ".."
+  },
+  "jobs_panel": {
+    "empty_hint": "No jobs yet. Configure endpoints and click Sync.",
+    "status_running": "Running",
+    "status_success": "Success",
+    "status_failed": "Failed",
+    "exec_on": "Exec on",
+    "mode": "Mode",
+    "mode_local": "Local (Go-native)",
+    "mode_on_source": "On source host",
+    "mode_on_dest": "On dest host",
+    "mode_two_step_local": "Two-step via local"
+  },
+  "transfer_options": {
+    "profile_lan": "LAN (fast)",
+    "profile_wan": "WAN (compressed)",
+    "exec_side_auto": "Exec: Auto",
+    "exec_side_source": "Exec: Source",
+    "exec_side_dest": "Exec: Dest",
+    "option_archive": "Archive (-a)",
+    "option_compress": "Compress (-z)",
+    "option_delete": "Delete (--delete)",
+    "option_dry_run": "Dry Run (-n)",
+    "bwlimit_placeholder": "Bandwidth (KB/s)",
+    "extra_args_placeholder": "Extra args (e.g. --exclude='*.tmp')"
+  }
+}
