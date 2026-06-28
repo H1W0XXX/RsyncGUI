@@ -215,11 +215,149 @@ func (w *jobLineWriter) Flush() {
 
 }
 
+func logLocalPathDiagnostics(w *jobLineWriter, label, path string) {
+	abs, absErr := filepath.Abs(path)
+	if absErr != nil {
+		abs = path
+	}
+
+	info, err := os.Lstat(path)
+	if err != nil {
+		w.appendLine(fmt.Sprintf("[diag] %s: stat failed path=%q err=%v", label, abs, err))
+		return
+	}
+
+	kind := "file"
+	if info.IsDir() {
+		kind = "dir"
+	} else if info.Mode()&os.ModeSymlink != 0 {
+		kind = "symlink"
+	} else if !info.Mode().IsRegular() {
+		kind = "special"
+	}
+	w.appendLine(fmt.Sprintf("[diag] %s: %s path=%q size=%d mode=%s mtime=%s",
+		label,
+		kind,
+		abs,
+		info.Size(),
+		info.Mode(),
+		info.ModTime().Format(time.RFC3339),
+	))
+}
+
+func logRemotePathDiagnostics(ctx context.Context, sshCli *ssh.Client, label, path string, w *jobLineWriter) {
+	diagCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
+	defer cancel()
+
+	script := remotePathDiagnosticScript(path)
+	w.appendLine("[diag] remote " + label + " diagnostics start")
+
+	sess, err := sshCli.NewSession()
+	if err != nil {
+		w.appendLine("[diag] remote diagnostics failed: new session: " + err.Error())
+		return
+	}
+	defer sess.Close()
+	stopCancel := closeSessionOnCancel(diagCtx, sess)
+	defer stopCancel()
+
+	sess.Stdout = w
+	sess.Stderr = w
+	if err := sess.Start("sh -c " + shQuote(script)); err != nil {
+		w.appendLine("[diag] remote diagnostics failed: start: " + err.Error())
+		return
+	}
+	if err := waitSession(diagCtx, sess); err != nil {
+		w.appendLine("[diag] remote diagnostics exit: " + err.Error())
+	}
+	w.Flush()
+}
+
+func remotePathDiagnosticScript(path string) string {
+	return "p=" + shQuote(path) + "\n" + strings.TrimSpace(`
+echo "[diag] remote uname: $(uname -a 2>/dev/null || true)"
+echo "[diag] remote user: $(id 2>/dev/null || true)"
+if command -v rsync >/dev/null 2>&1; then
+  echo "[diag] remote rsync path: $(command -v rsync)"
+  rsync --version 2>/dev/null | sed -n '1s/^/[diag] remote rsync version: /p'
+else
+  echo "[diag] remote rsync path: missing"
+fi
+parent=$(dirname -- "$p" 2>/dev/null || echo ".")
+echo "[diag] target path: $p"
+echo "[diag] target parent: $parent"
+if [ -e "$p" ]; then
+  ls -ld -- "$p" 2>&1 | sed 's/^/[diag] target ls: /'
+else
+  echo "[diag] target exists: no"
+fi
+if [ -d "$p" ]; then
+  if [ -w "$p" ]; then echo "[diag] target writable: yes"; else echo "[diag] target writable: no"; fi
+else
+  if [ -d "$parent" ]; then
+    ls -ld -- "$parent" 2>&1 | sed 's/^/[diag] parent ls: /'
+    if [ -w "$parent" ]; then echo "[diag] parent writable: yes"; else echo "[diag] parent writable: no"; fi
+  else
+    echo "[diag] parent exists: no"
+  fi
+fi
+(df -Pk -- "$p" 2>/dev/null || df -Pk -- "$parent" 2>/dev/null || true) | sed 's/^/[diag] df: /'
+`) + "\n"
+}
+
+func forceRemoteRsyncProtocol(args []string) []string {
+	const protocolArg = "--protocol=27"
+	for _, arg := range args {
+		if arg == protocolArg || strings.HasPrefix(arg, "--protocol=") {
+			return args
+		}
+	}
+	out := make([]string, 0, len(args)+1)
+	if len(args) > 0 && args[0] == "--server" {
+		out = append(out, args[0], protocolArg)
+		out = append(out, args[1:]...)
+		return out
+	}
+	out = append(out, protocolArg)
+	out = append(out, args...)
+	return out
+}
+
 func buildRsyncArgs(opts *RsyncOptions) []string {
 	var args []string
 
 	if opts.Archive {
 		args = append(args, "-a")
+	} else {
+		args = append(args, "-r")
+	}
+	if opts.Compress {
+		args = append(args, "-z")
+	}
+	if opts.Delete {
+		args = append(args, "--delete")
+	}
+	if opts.DryRun {
+		args = append(args, "--dry-run")
+	}
+	if opts.BwLimit > 0 {
+		args = append(args, fmt.Sprintf("--bwlimit=%d", opts.BwLimit))
+	}
+	if len(opts.ExtraArgs) > 0 {
+		args = append(args, opts.ExtraArgs...)
+	}
+
+	return args
+}
+
+func buildGoNativeRsyncArgs(opts *RsyncOptions, w *jobLineWriter) []string {
+	var args []string
+
+	if opts.Archive {
+		args = append(args, "-rltp")
+		if w != nil {
+			w.appendLine("[go-rsync] archive requested; using Go-native safe archive (-rltp, without owner/group/devices)")
+		}
 	} else {
 		args = append(args, "-r")
 	}
@@ -398,11 +536,12 @@ func (m *JobManager) runLocalToRemote_GoRsync(job *Job, ctx context.Context) err
 
 	w := &jobLineWriter{job: job}
 
-	clientArgs := buildRsyncArgs(&job.Request.Options)
+	clientArgs := buildGoNativeRsyncArgs(&job.Request.Options, w)
 	rsClient, err := rsyncclient.New(clientArgs, rsyncclient.WithSender(), rsyncclient.WithStderr(w))
 	if err != nil {
 		return fmt.Errorf("rsyncclient.New(sender): %w", err)
 	}
+	logLocalPathDiagnostics(w, "local source", job.Plan.Source.Path)
 
 	sshCli, err := sshDial(&remoteHost.Config, d, useLan)
 	if err != nil {
@@ -417,6 +556,7 @@ func (m *JobManager) runLocalToRemote_GoRsync(job *Job, ctx context.Context) err
 	if transport == remoteUploadTransportSCP {
 		return m.runLocalToRemote_SCP(job, ctx, sshCli, remoteHost, d)
 	}
+	logRemotePathDiagnostics(ctx, sshCli, "destination before rsync", job.Plan.Dest.Path, w)
 
 	sess, err := sshCli.NewSession()
 	if err != nil {
@@ -432,13 +572,9 @@ func (m *JobManager) runLocalToRemote_GoRsync(job *Job, ctx context.Context) err
 	if err != nil {
 		return err
 	}
-	stderr, err := sess.StderrPipe()
-	if err != nil {
-		return err
-	}
-	go io.Copy(w, stderr)
+	sess.Stderr = w
 
-	remoteServerArgs := rsClient.ServerCommandOptions(job.Plan.Dest.Path)
+	remoteServerArgs := forceRemoteRsyncProtocol(rsClient.ServerCommandOptions(job.Plan.Dest.Path))
 	remoteCmd := "rsync " + joinShellArgs(remoteServerArgs)
 
 	job.mu.Lock()
@@ -446,7 +582,13 @@ func (m *JobManager) runLocalToRemote_GoRsync(job *Job, ctx context.Context) err
 	job.mu.Unlock()
 
 	if err := sess.Start("sh -c " + shQuote(remoteCmd)); err != nil {
-		return fmt.Errorf("start remote rsync server: %w", err)
+		w.appendLine("[go-rsync] start remote rsync server failed: " + err.Error())
+		w.appendLine("[go-rsync] trying scp fallback after rsync start failure")
+		w.Flush()
+		if fallbackErr := m.runLocalToRemote_SCP(job, ctx, sshCli, remoteHost, d); fallbackErr != nil {
+			return fmt.Errorf("start remote rsync server: %v; scp fallback failed: %w", err, fallbackErr)
+		}
+		return nil
 	}
 
 	rw := &struct {
@@ -456,13 +598,35 @@ func (m *JobManager) runLocalToRemote_GoRsync(job *Job, ctx context.Context) err
 
 	if _, err := rsClient.Run(ctx, rw, []string{job.Plan.Source.Path}); err != nil {
 		_ = sess.Close()
+		waitCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		waitErr := waitSession(waitCtx, sess)
+		cancel()
+		if waitErr != nil {
+			w.appendLine("[go-rsync] remote rsync server after client error: " + waitErr.Error())
+		} else {
+			w.appendLine("[go-rsync] remote rsync server after client error: exited cleanly")
+		}
+		w.appendLine("[go-rsync] local rsyncclient sender error: " + err.Error())
+		logRemotePathDiagnostics(ctx, sshCli, "destination after rsync failure", job.Plan.Dest.Path, w)
 		w.Flush()
-		return fmt.Errorf("rsyncclient.Run(sender): %w", err)
+		w.appendLine("[go-rsync] trying scp fallback after rsync transfer failure")
+		w.Flush()
+		if fallbackErr := m.runLocalToRemote_SCP(job, ctx, sshCli, remoteHost, d); fallbackErr != nil {
+			return fmt.Errorf("rsyncclient.Run(sender): %v; scp fallback failed: %w", err, fallbackErr)
+		}
+		return nil
 	}
 
 	if err := sess.Wait(); err != nil {
+		w.appendLine("[go-rsync] remote rsync server exit error: " + err.Error())
+		logRemotePathDiagnostics(ctx, sshCli, "destination after remote rsync exit", job.Plan.Dest.Path, w)
 		w.Flush()
-		return fmt.Errorf("remote rsync server exit: %w", err)
+		w.appendLine("[go-rsync] trying scp fallback after remote rsync exit failure")
+		w.Flush()
+		if fallbackErr := m.runLocalToRemote_SCP(job, ctx, sshCli, remoteHost, d); fallbackErr != nil {
+			return fmt.Errorf("remote rsync server exit: %v; scp fallback failed: %w", err, fallbackErr)
+		}
+		return nil
 	}
 
 	w.Flush()
@@ -557,17 +721,19 @@ func (m *JobManager) runRemoteToLocal_GoRsync(job *Job, ctx context.Context) err
 
 	w := &jobLineWriter{job: job}
 
-	clientArgs := buildRsyncArgs(&job.Request.Options)
+	clientArgs := buildGoNativeRsyncArgs(&job.Request.Options, w)
 	rsClient, err := rsyncclient.New(clientArgs, rsyncclient.WithStderr(w))
 	if err != nil {
 		return fmt.Errorf("rsyncclient.New(receiver): %w", err)
 	}
+	logLocalPathDiagnostics(w, "local destination", job.Plan.Dest.Path)
 
 	sshCli, err := sshDial(&remoteHost.Config, d, useLan)
 	if err != nil {
 		return err
 	}
 	defer sshCli.Close()
+	logRemotePathDiagnostics(ctx, sshCli, "source before rsync", job.Plan.Source.Path, w)
 
 	sess, err := sshCli.NewSession()
 	if err != nil {
@@ -583,13 +749,9 @@ func (m *JobManager) runRemoteToLocal_GoRsync(job *Job, ctx context.Context) err
 	if err != nil {
 		return err
 	}
-	stderr, err := sess.StderrPipe()
-	if err != nil {
-		return err
-	}
-	go io.Copy(w, stderr)
+	sess.Stderr = w
 
-	remoteServerArgs := rsClient.ServerCommandOptions(job.Plan.Source.Path)
+	remoteServerArgs := forceRemoteRsyncProtocol(rsClient.ServerCommandOptions(job.Plan.Source.Path))
 	remoteCmd := "cd ~ 2>/dev/null && command rsync " + joinShellArgs(remoteServerArgs)
 
 	job.mu.Lock()
@@ -609,11 +771,23 @@ func (m *JobManager) runRemoteToLocal_GoRsync(job *Job, ctx context.Context) err
 
 	if _, err := rsClient.Run(ctx, rw, []string{job.Plan.Dest.Path}); err != nil {
 		_ = sess.Close()
+		waitCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		waitErr := waitSession(waitCtx, sess)
+		cancel()
+		if waitErr != nil {
+			w.appendLine("[go-rsync] remote rsync server after client error: " + waitErr.Error())
+		} else {
+			w.appendLine("[go-rsync] remote rsync server after client error: exited cleanly")
+		}
+		w.appendLine("[go-rsync] local rsyncclient receiver error: " + err.Error())
+		logRemotePathDiagnostics(ctx, sshCli, "source after rsync failure", job.Plan.Source.Path, w)
 		w.Flush()
 		return fmt.Errorf("rsyncclient.Run(receiver): %w", err)
 	}
 
 	if err := sess.Wait(); err != nil {
+		w.appendLine("[go-rsync] remote rsync server exit error: " + err.Error())
+		logRemotePathDiagnostics(ctx, sshCli, "source after remote rsync exit", job.Plan.Source.Path, w)
 		w.Flush()
 		return fmt.Errorf("remote rsync server exit: %w", err)
 	}

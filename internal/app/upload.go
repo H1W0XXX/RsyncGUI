@@ -111,7 +111,7 @@ func (a *App) UploadLocalFile(hostName, dstDir, relPath, localFile string) error
 	// 这里你可以接你已有的 jobLineWriter；UploadLocalFile 没 job，就先丢弃或打印
 	go io.Copy(io.Discard, stderr)
 
-	remoteServerArgs := rsClient.ServerCommandOptions(finalDirRemote)
+	remoteServerArgs := forceRemoteRsyncProtocol(rsClient.ServerCommandOptions(finalDirRemote))
 	remoteCmd := "cd ~ 2>/dev/null && command rsync " + joinShellArgs(remoteServerArgs)
 
 	if err := sess.Start("sh -c " + shQuote(remoteCmd)); err != nil {

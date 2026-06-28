@@ -63,7 +63,7 @@ func probeRemoteRsyncBlackhole(ctx context.Context, sshCli *ssh.Client, w *jobLi
 	}
 
 	remoteDir := fmt.Sprintf("/tmp/rsyncgui-rsync-blackhole-%d", time.Now().UnixNano())
-	remoteServerArgs := rsClient.ServerCommandOptions(remoteDir + "/")
+	remoteServerArgs := forceRemoteRsyncProtocol(rsClient.ServerCommandOptions(remoteDir + "/"))
 	remoteCmd := fmt.Sprintf(
 		"rm -rf %s && mkdir -p %s && trap 'rm -rf %s' EXIT && command rsync %s",
 		shQuote(remoteDir),
